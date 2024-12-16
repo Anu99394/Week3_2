@@ -1,0 +1,147 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.0'
+	id 'io.spring.dependency-management' version '1.1.6'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(23) // Java version set to 23
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+springBoot {
+	mainClass = 'com.example.testgeneration.TestgenerationApplication'
+}
+
+// Task to generate tests
+task generateTests(type: DefaultTask) {
+	group = 'custom'
+	description = 'Generates test cases for public methods using reflection'
+
+	doLast {
+		def sourceDir = file('src/main/java')
+		def testDir = file('src/test/java')
+
+		// the base package
+		def basePackage = 'com.example.testgeneration'
+
+		sourceDir.eachFileRecurse { file ->
+			if (file.name.endsWith('.java')) {
+				def className = file.name - '.java'
+				def packagePath = file.parentFile.toPath().relativize(sourceDir.toPath()).toString().replace(File.separator, '.')
+				def classFullName = packagePath ? "$basePackage.$className" : className
+
+				// Load the class using reflection
+				try {
+					def clazz = Class.forName(classFullName)
+					def testClassFile = new File(testDir, "$basePackage/${className}Test.java")
+
+					// Check if the test file already exists
+					if (!testClassFile.exists()) {
+						println "Generating test file for $classFullName"
+						def testClassContent = generateTestClassContent(clazz)
+						testClassFile.parentFile.mkdirs() // Ensure the directory exists
+						testClassFile.write(testClassContent)
+					}
+				} catch (ClassNotFoundException e) {
+					println "Skipping class $classFullName: Class not found"
+				}
+			}
+		}
+	}
+}
+
+// Helper method to generate test class content
+def generateTestClassContent(Class<?> clazz)
+{
+	def className = clazz.simpleName
+	def testClassName = "${className}Test"
+	def testMethods = clazz.declaredMethods.findAll { it.modifiers & 0x00000001 } // Filter public methods
+
+	def testClassContent = """
+        package $clazz.packageName;
+
+        import org.junit.jupiter.api.Test;
+        import static org.junit.jupiter.api.Assertions.*;
+
+        public class $testClassName 
+	{
+
+    """
+
+	// Generate a test method for each public method
+	testMethods.each { method ->
+		def methodName = method.name
+		def params = method.parameterTypes
+		def paramNames = params.collect { "param" }
+		def paramList = paramNames.join(', ')
+
+		testClassContent += """
+
+            @Test
+            public void test$methodName() 
+			{
+                $className instance = new $className();
+                ${generateTestMethodBody(method, paramNames)}
+            }
+        """
+	}
+
+	testClassContent += """
+        }
+    """
+
+	return testClassContent
+}
+
+// Generate the test method body
+def generateTestMethodBody(method, paramNames) {
+	def methodName = method.name
+	def params = method.parameterTypes
+	def methodCall = "$methodName(${paramNames.join(', ')})"
+	def expectedValue = '/* TODO: Set expected value for your test */'
+
+	def returnType = method.returnType.simpleName
+	return """
+        // Example: Expected result of method $methodName
+        $returnType result = instance.$methodCall;
+        assertEquals($expectedValue, result);
+    """
+}
+
+// Make sure the test source directory exists
+sourceSets {
+	main {
+		java {
+			srcDirs = ['src/main/java']
+		}
+	}
+	test {
+		java {
+			srcDirs = ['src/test/java']
+		}
+	}
+}
+
+task runGeneratedTests(type: Test) {
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+}
